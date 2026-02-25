@@ -5,6 +5,77 @@
 [![Paper](https://img.shields.io/badge/Paper-A42C25?style=for-the-badge&logo=arxiv&logoColor=white)](https://arxiv.org/pdf/2509.09372) [![Hugging Face Collection](https://img.shields.io/badge/Models-fcd022?style=for-the-badge&logo=huggingface&logoColor=white)](https://huggingface.co/VLA-Adapter) [![Twitter](https://img.shields.io/badge/AK-%23000000.svg?style=for-the-badge&logo=x&logoColor=white)](https://x.com/_akhaliq/status/1966610780838621241) [![WeChat](https://img.shields.io/badge/WeChat--Group-07C160?style=for-the-badge&logo=wechat&logoColor=white)](https://github.com/OpenHelix-Team/VLA-Adapter/issues/1)
 
 </div>
+## VLA-Adapter 侧修改（训练读取端）
+
+### 2.1 `prismatic/vla/datasets/rlds/dataset.py` — Builder 加载 fallback
+
+**修改位置**：`make_dataset_from_rlds()` 函数中的 `tfds.builder()` 调用。
+
+```python
+# 原先
+builder = tfds.builder(name, data_dir=data_dir)
+
+# 修改后：增加 fallback，支持本地生成的数据集
+try:
+    builder = tfds.builder(name, data_dir=data_dir)
+except Exception:
+    import os
+    local_dataset_dir = os.path.join(data_dir, name)
+    if os.path.isdir(local_dataset_dir):
+        builder = tfds.builder_from_directory(local_dataset_dir)
+    else:
+        raise
+```
+
+**原因**：`tfds.builder(name, ...)` 要求 builder 已在 TFDS 注册中心注册（通过 pip install）。对于本地通过 `RLDSDataWriter` 生成的数据集，标准目录结构已包含完整的 `dataset_info.json` + `features.json`，可以用 `tfds.builder_from_directory()` 直接从目录加载，无需安装 builder 包。
+
+---
+
+### 2.2 `prismatic/vla/datasets/rlds/oxe/configs.py` — 数据集配置注册
+
+在 `OXE_DATASET_CONFIGS` 字典中新增条目：
+
+```python
+### Generated datasets (from Gen/ pipeline, same format as LIBERO)
+"pouringwater_generated": {
+    "image_obs_keys": {"primary": "image", "secondary": None, "wrist": "wrist_image"},
+    "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
+    "state_obs_keys": ["EEF_state", "gripper_state"],
+    "state_encoding": StateEncoding.POS_EULER,
+    "action_encoding": ActionEncoding.EEF_POS,
+},
+```
+
+与 LIBERO 各数据集配置完全相同，因为我们的 state/action/image 字段结构一致。
+
+---
+
+### 2.3 `prismatic/vla/datasets/rlds/oxe/transforms.py` — Transform 注册
+
+在 `OXE_STANDARDIZATION_TRANSFORMS` 字典中新增条目：
+
+```python
+### Generated datasets (from Gen/ pipeline, same format as LIBERO)
+"pouringwater_generated": libero_dataset_transform,
+```
+
+直接复用 `libero_dataset_transform`，该函数执行：
+1. gripper action: `[-1, 1]` → `clip [0, 1]` → `invert` → `1=open, 0=close`
+2. `EEF_state = state[:, :6]`（eef_pos + eef_axisangle）
+3. `gripper_state = state[:, -2:]`（gripper_qpos 2D）
+
+---
+
+### 2.4 `prismatic/vla/datasets/rlds/oxe/mixtures.py` — Mixture 注册
+
+```python
+# === Generated Datasets (from Gen/ pipeline) ===
+"pouringwater_generated": [
+    ("pouringwater_generated", 1.0),
+],
+```
+
+---
 
 ### The official implementation of **VLA-Adapter**.
 <br/>

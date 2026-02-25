@@ -199,6 +199,18 @@ def make_dataset_from_rlds(
 
         return traj
 
+    # Try standard tfds.builder first; fall back to builder_from_directory for locally generated datasets
+    # try:
+    #     builder = tfds.builder(name, data_dir=data_dir)
+    # except Exception:
+    #     import os
+    #     local_dataset_dir = os.path.join(data_dir, name)
+    #     if os.path.isdir(local_dataset_dir):
+    #         builder = tfds.builder_from_directory(local_dataset_dir)
+    #     else:
+    #         raise
+
+
     builder = tfds.builder(name, data_dir=data_dir)
 
     # load or compute dataset statistics
