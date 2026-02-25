@@ -3,9 +3,9 @@
 
 
 [![Paper](https://img.shields.io/badge/Paper-A42C25?style=for-the-badge&logo=arxiv&logoColor=white)](https://arxiv.org/pdf/2509.09372) [![Hugging Face Collection](https://img.shields.io/badge/Models-fcd022?style=for-the-badge&logo=huggingface&logoColor=white)](https://huggingface.co/VLA-Adapter) [![Twitter](https://img.shields.io/badge/AK-%23000000.svg?style=for-the-badge&logo=x&logoColor=white)](https://x.com/_akhaliq/status/1966610780838621241) [![WeChat](https://img.shields.io/badge/WeChat--Group-07C160?style=for-the-badge&logo=wechat&logoColor=white)](https://github.com/OpenHelix-Team/VLA-Adapter/issues/1)
-
 </div>
-## VLA-Adapter 侧修改（训练读取端）
+
+#### VLA-Adapter 侧修改（添加新的数据集读取方式）
 
 ### 2.1 `prismatic/vla/datasets/rlds/dataset.py` — Builder 加载 fallback
 
