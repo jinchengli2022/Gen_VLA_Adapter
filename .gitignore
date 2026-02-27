@@ -154,3 +154,8 @@ wandb/
 
 outputs/
 pretrained_models/prism-qwen25-extra-dinosiglip-224px-0_5b
+**/__pycache__/
+*.pyc
+pretrained_models/configs/config.json.back.*
+.DS_Store
+eval_logs/
