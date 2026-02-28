@@ -776,7 +776,40 @@ def finetune(cfg: FinetuneConfig) -> None:
 
     if cfg.use_minivlm:
         hf_token = ''
-        if 'prism-qwen25-extra-dinosiglip-224px-0_5b' in cfg.vlm_path:
+        if cfg.resume and cfg.merge_lora_during_training:
+            # Resume from merged checkpoint: load the merged model directly as base
+            # The merged model.safetensors already contains all trained weights (base + LoRA merged)
+            print(f"Resume: loading merged base model from {cfg.resum_vla_path}")
+            vla = AutoModelForVision2Seq.from_pretrained(
+                cfg.resum_vla_path,
+                torch_dtype=torch.bfloat16,
+                low_cpu_mem_usage=False,
+                trust_remote_code=False,
+            ).to(device_id)
+            # Still need RAW_STATE_DICT for saving merged checkpoints later
+            vlm = load(cfg.vlm_path, hf_token=hf_token, load_for_training=True)
+            replace_map = [
+                ("vision_backbone.dino_featurizer", "vision_backbone.featurizer"),
+                ("vision_backbone.siglip_featurizer", "vision_backbone.fused_featurizer"),
+                ("llm_backbone.llm", "language_model"),
+                ("projector.projector.0", "projector.fc1"),
+                ("projector.projector.2", "projector.fc2"),
+                ("projector.projector.4", "projector.fc3"),
+                ("gamma", "scale_factor"),
+            ]
+            def rename_state_dict_keys(state_dict, replace_map):
+                new_state_dict = {}
+                for k, v in state_dict.items():
+                    new_k = k
+                    for old, new in replace_map:
+                        if old in new_k:
+                            new_k = new_k.replace(old, new)
+                    new_state_dict[new_k] = v
+                return new_state_dict
+            old_state_dict = vlm.state_dict()
+            RAW_STATE_DICT = rename_state_dict_keys(old_state_dict, replace_map)
+            del old_state_dict, vlm
+        elif 'prism-qwen25-extra-dinosiglip-224px-0_5b' in cfg.vlm_path:
             
             vlm = load(cfg.vlm_path, hf_token=hf_token, load_for_training=True)
         else:
@@ -830,14 +863,34 @@ def finetune(cfg: FinetuneConfig) -> None:
     # vla.set_version(cfg.version)
 
     if cfg.use_lora:
-        lora_config = LoraConfig(
-            r=cfg.lora_rank,
-            lora_alpha= 2 * cfg.lora_rank,
-            lora_dropout=cfg.lora_dropout,
-            target_modules="all-linear",
-            init_lora_weights="gaussian",
-        )
-        vla = get_peft_model(vla, lora_config)
+        if cfg.resume and cfg.merge_lora_during_training:
+            # Resume from merged checkpoint: base model already contains all trained weights,
+            # so initialize fresh LoRA on top of the merged base (delta starts from zero)
+            lora_config = LoraConfig(
+                r=cfg.lora_rank,
+                lora_alpha= 2 * cfg.lora_rank,
+                lora_dropout=cfg.lora_dropout,
+                target_modules="all-linear",
+                init_lora_weights=True,  # Initialize to zero (identity) so model starts where it left off
+            )
+            vla = get_peft_model(vla, lora_config)
+            print("Resume with merged checkpoint: initialized fresh LoRA (zero-init) on merged base")
+        elif cfg.resume and not cfg.merge_lora_during_training:
+            # Resume without merge: load the saved LoRA adapter delta on top of original base
+            adapter_path = Path(cfg.resum_vla_path) / "lora_adapter"
+            print(f"Loading LoRA adapter from: {adapter_path}")
+            vla = PeftModel.from_pretrained(vla, adapter_path, is_trainable=True)
+            print("LoRA adapter loaded!!!!!!!!!")
+        else:
+            # Fresh training: initialize new LoRA weights
+            lora_config = LoraConfig(
+                r=cfg.lora_rank,
+                lora_alpha= 2 * cfg.lora_rank,
+                lora_dropout=cfg.lora_dropout,
+                target_modules="all-linear",
+                init_lora_weights="gaussian",
+            )
+            vla = get_peft_model(vla, lora_config)
         for name, param in vla.named_parameters():
             if "action_queries" in name:
                 param.requires_grad = True
@@ -1084,7 +1137,9 @@ def finetune(cfg: FinetuneConfig) -> None:
                 progress.update()
 
             # Save model checkpoint: either keep latest checkpoint only or all checkpoints
-            if gradient_step_idx > 0 and log_step % cfg.save_freq == 0:
+            # Use batch_idx > 0 to avoid re-saving the resume checkpoint at the very first step
+            local_step = batch_idx // cfg.grad_accumulation_steps
+            if (not cfg.resume or local_step > 0) and gradient_step_idx > 0 and log_step % cfg.save_freq == 0:
                 save_training_checkpoint(
                     cfg=cfg,
                     run_dir=run_dir,
