@@ -267,11 +267,17 @@ def prepare_observation(obs, resize_size):
     img_resized = resize_image_for_policy(img, resize_size)
     wrist_img_resized = resize_image_for_policy(wrist_img, resize_size)
 
-    # Build proprio state: eef_pos(3) + eef_axisangle(3) + gripper_qpos(2)
+    # Build proprio state: eef_pos(3) + eef_axisangle(3) + gripper_qpos(2) = 8D
+    # 与 data_writer.py 中训练数据生成时的处理完全一致：
+    #   原始 robot0_gripper_qpos 为 6 维（UR5e 三指夹爪），需降维为 2 维并二值化
     raw = obs["raw_obs"]
     eef_pos = raw["robot0_eef_pos"]
     eef_axisangle = quat2axisangle(raw["robot0_eef_quat"].copy())
-    gripper_qpos = raw["robot0_gripper_qpos"]
+
+    gripper_qpos_full = raw["robot0_gripper_qpos"]  # 原始 6 维
+    gripper_qpos = np.zeros(2)
+    gripper_qpos[1] = -1 if gripper_qpos_full[0] < 0 else 1  # 二值化: -1=开, 1=闭
+
     state = np.concatenate([eef_pos, eef_axisangle, gripper_qpos])
 
     observation = {
