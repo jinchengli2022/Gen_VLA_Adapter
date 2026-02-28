@@ -1013,7 +1013,9 @@ def finetune(cfg: FinetuneConfig) -> None:
     }
 
     # Start training
-    with tqdm.tqdm(total=cfg.max_steps, leave=False) as progress:
+    step_offset = cfg.resume_step if cfg.resume else 0
+    remaining_steps = cfg.max_steps - step_offset
+    with tqdm.tqdm(total=remaining_steps, leave=False) as progress:
         vla.train()
         optimizer.zero_grad()
         for batch_idx, batch in enumerate(dataloader):
@@ -1046,20 +1048,20 @@ def finetune(cfg: FinetuneConfig) -> None:
                 if metric_name in recent_metrics:
                     recent_metrics[metric_name].append(value)
 
-            # Compute gradient step index
-            gradient_step_idx = batch_idx // cfg.grad_accumulation_steps
+            # Compute gradient step index (offset by resume_step so log_step is always global)
+            gradient_step_idx = step_offset + batch_idx // cfg.grad_accumulation_steps
 
             # Compute smoothened train metrics
             smoothened_metrics = compute_smoothened_metrics(recent_metrics)
 
             # Push Metrics to W&B (every wandb_log_freq gradient steps)
-            log_step = gradient_step_idx if not cfg.resume else cfg.resume_step + gradient_step_idx
+            log_step = gradient_step_idx
             if distributed_state.is_main_process and log_step % cfg.wandb_log_freq == 0:
                 log_metrics_to_wandb(smoothened_metrics, "VLA Train", log_step, wandb)
 
             # [If applicable] Linearly warm up learning rate from 10% to 100% of original
             if cfg.lr_warmup_steps > 0:
-                lr_progress = min((gradient_step_idx + 1) / cfg.lr_warmup_steps, 1.0)  # Cap at 1.0
+                lr_progress = min((batch_idx // cfg.grad_accumulation_steps + 1) / cfg.lr_warmup_steps, 1.0)  # Cap at 1.0
                 current_lr = original_lr * (0.1 + 0.9 * lr_progress)
                 for param_group in optimizer.param_groups:
                     param_group["lr"] = current_lr
